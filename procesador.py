@@ -8,7 +8,6 @@ import imageio_ffmpeg
 from config import OPENAI_API_KEY, CARPETA_ORIGEN, CARPETA_CLIPS
 
 
-# 1. Conversión de colores HTML Hex (#RRGGBB) a formato ASS (&H00BBGGRR)
 def hex_a_ass_color(hex_str):
     """Convierte un color HTML (#RRGGBB) al formato BGR utilizado por subtítulos ASS."""
     hex_str = hex_str.lstrip('#')
@@ -18,7 +17,6 @@ def hex_a_ass_color(hex_str):
     return f"&H00{b}{g}{r}"
 
 
-# 2. Formato de marcas de tiempo para archivos .ass
 def formato_tiempo_ass(segundos):
     """Convierte segundos en formato flotante a HH:MM:SS.cs para la especificación ASS."""
     hrs = int(segundos // 3600)
@@ -28,12 +26,8 @@ def formato_tiempo_ass(segundos):
     return f"{hrs:01d}:{mins:02d}:{secs:02d}.{centis:02d}"
 
 
-# 3. Descarga multi-usuario aislada y verificada
 def descargar_directo(url_video):
-    """
-    Descarga el video en una carpeta con identificador único (UUID)
-    para evitar conflictos cuando varios procesos se ejecutan al mismo tiempo.
-    """
+    """Descarga el video en una carpeta única por sesión (UUID)."""
     id_sesion = str(uuid.uuid4())[:8]
     carpeta_sesion = os.path.join(CARPETA_ORIGEN, id_sesion)
     os.makedirs(carpeta_sesion, exist_ok=True)
@@ -62,36 +56,28 @@ def descargar_directo(url_video):
     return ruta_salida, id_sesion
 
 
-# 4. Extracción rápida de audio usando el códec AAC nativo (Solución al fallo libmp3lame / status 254)
 def extraer_audio_ligero(ruta_video, ruta_audio_salida):
-    """
-    Extrae la pista de audio en un formato AAC liviano (.m4a)
-    evitando errores de códecs MP3 faltantes en Windows y servidores Linux.
-    """
+    """Extrae la pista de audio en un formato AAC liviano (.m4a)."""
     if not os.path.exists(ruta_video) or os.path.getsize(ruta_video) == 0:
-        raise FileNotFoundError(f"El video de origen no existe o no se descargó correctamente: {ruta_video}")
+        raise FileNotFoundError(f"El video de origen no existe: {ruta_video}")
 
     print("🔊 Extrayendo pista de audio ligera para la API...")
     cmd = [
         imageio_ffmpeg.get_ffmpeg_exe(), '-y',
         '-i', ruta_video,
-        '-vn',                   # Sin pista de video
-        '-c:a', 'aac',           # Códec AAC nativo universal (sin librerías externas)
-        '-ar', '16000',          # Frecuencia optimizada para Whisper
-        '-ac', '1',              # Canal mono
-        '-b:a', '64k',           # Compresión liviana para subida rápida
+        '-vn',
+        '-c:a', 'aac',
+        '-ar', '16000',
+        '-ac', '1',
+        '-b:a', '64k',
         ruta_audio_salida
     ]
     subprocess.run(cmd, check=True)
     return ruta_audio_salida
 
 
-# 5. Transcripción remota usando la API de OpenAI Whisper
 def obtener_transcripcion_api_whisper(ruta_video, api_key=None):
-    """
-    Sube el audio comprimido .m4a a los servidores de OpenAI mediante la API oficial
-    y obtiene marcas de tiempo palabra por palabra sin consumo de RAM local.
-    """
+    """Sube el audio comprimido a la API de OpenAI Whisper."""
     print("☁️ Enviando audio a la API remota de OpenAI Whisper...")
     key_a_usar = api_key if api_key else OPENAI_API_KEY
     client = openai.OpenAI(api_key=key_a_usar)
@@ -100,10 +86,8 @@ def obtener_transcripcion_api_whisper(ruta_video, api_key=None):
     ruta_audio_temp = os.path.join(directorio, "audio_temp.m4a")
 
     try:
-        # Extraer audio rápido en formato M4A (AAC)
         extraer_audio_ligero(ruta_video, ruta_audio_temp)
 
-        # Enviar a la API de OpenAI Whisper
         with open(ruta_audio_temp, "rb") as audio_file:
             respuesta = client.audio.transcriptions.create(
                 model="whisper-1",
@@ -142,11 +126,10 @@ def obtener_transcripcion_api_whisper(ruta_video, api_key=None):
             os.remove(ruta_audio_temp)
 
 
-# 6. Selección de momentos clave con la IA de OpenAI
 def seleccionar_highlights(segmentos_transcripcion, cantidad_clips=5, duracion_clip=15, api_key=None):
-    """Filtra la transcripción usando GPT-4o-mini para elegir los momentos virales en JSON."""
-    print(f"🤖 Seleccionando los mejores {cantidad_clips} momentos con la IA de OpenAI...")
-
+    """Filtra la transcripción usando GPT-4o-mini."""
+    print(f"🤖 Seleccionando los mejores {cantidad_clips} momentos con la IA...")
+    
     key_a_usar = api_key if api_key else OPENAI_API_KEY
     client = openai.OpenAI(api_key=key_a_usar)
 
@@ -161,8 +144,7 @@ def seleccionar_highlights(segmentos_transcripcion, cantidad_clips=5, duracion_c
 
     Responde ÚNICAMENTE en formato JSON válido con este esquema exacto:
     [
-      {{"inicio": 15, "fin": {15 + duracion_clip}, "titulo": "Momento insólito"}},
-      ...
+      {{"inicio": 15, "fin": {15 + duracion_clip}, "titulo": "Momento insólito"}}
     ]
 
     Transcripción:
@@ -178,4 +160,99 @@ def seleccionar_highlights(segmentos_transcripcion, cantidad_clips=5, duracion_c
 
     if contenido.startswith("```json"):
         contenido = contenido[7:-3].strip()
-    elif contenido.startswith("
+    elif contenido.startswith("```"):
+        contenido = contenido[3:-3].strip()
+
+    return json.loads(contenido)
+
+
+def generar_subtitulos_personalizados(segmentos_clip, inicio_clip, fin_clip, ruta_ass_salida,
+                                      color_texto_ass="&H0000FFFF",
+                                      color_borde_ass="&H00000000",
+                                      tamanio_fuente=80,
+                                      alineacion=5):
+    """Genera archivo de subtítulos .ass personalizables."""
+    cabecera = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,{tamanio_fuente},{color_texto_ass},&H00000000,{color_borde_ass},&H80000000,1,0,0,0,100,100,0,0,1,6,0,{alineacion},50,50,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+
+    for seg in segmentos_clip:
+        if 'words' in seg:
+            for word_info in seg['words']:
+                w_start = word_info['start']
+                w_end = word_info['end']
+                texto = word_info['word'].strip().upper()
+
+                if w_start >= inicio_clip and w_end <= fin_clip:
+                    rel_start = w_start - inicio_clip
+                    rel_end = w_end - inicio_clip
+
+                    t_ini = formato_tiempo_ass(rel_start)
+                    t_fin = formato_tiempo_ass(rel_end)
+
+                    events.append(f"Dialogue: 0,{t_ini},{t_fin},Hormozi,,0,0,0,,{texto}")
+
+    with open(ruta_ass_salida, 'w', encoding='utf-8') as f:
+        f.write(cabecera + "\n".join(events))
+
+
+def exportar_clip(ruta_video_input, inicio_sec, duracion_sec, numero_clip, segmentos, id_sesion,
+                  incluir_subtitulos=True, color_texto="&H0000FFFF", color_borde="&H00000000",
+                  tamanio_fuente=80, alineacion=5):
+    """Exporta el clip vertical 9:16 con o sin subtítulos."""
+    fin_sec = inicio_sec + duracion_sec
+    carpeta_clips_sesion = os.path.join(CARPETA_CLIPS, id_sesion)
+    os.makedirs(carpeta_clips_sesion, exist_ok=True)
+
+    nombre_archivo = f"clip_{numero_clip}_viral.mp4"
+    ruta_final = os.path.join(carpeta_clips_sesion, nombre_archivo)
+
+    filtro_video = "crop=ih*(9/16):ih,scale=1080:1920"
+    ruta_ass = None
+
+    if incluir_subtitulos:
+        ruta_ass = os.path.join(carpeta_clips_sesion, f"sub_{numero_clip}_{uuid.uuid4().hex[:4]}.ass")
+        generar_subtitulos_personalizados(
+            segmentos_clip=segmentos,
+            inicio_clip=inicio_sec,
+            fin_clip=fin_sec,
+            ruta_ass_salida=ruta_ass,
+            color_texto_ass=color_texto,
+            color_borde_ass=color_borde,
+            tamanio_fuente=tamanio_fuente,
+            alineacion=alineacion
+        )
+        ruta_ass_ffmpeg = ruta_ass.replace('\\', '/').replace(':', '\\:')
+        filtro_video += f",subtitles='{ruta_ass_ffmpeg}'"
+
+    cmd = [
+        imageio_ffmpeg.get_ffmpeg_exe(), '-y',
+        '-threads', '0',
+        '-ss', str(inicio_sec),
+        '-i', ruta_video_input,
+        '-t', str(duracion_sec),
+        '-vf', filtro_video,
+        '-c:v', 'libx264',
+        '-crf', '18',
+        '-preset', 'ultrafast',
+        '-c:a', 'aac',
+        ruta_final
+    ]
+
+    subprocess.run(cmd, check=True)
+
+    if ruta_ass and os.path.exists(ruta_ass):
+        os.remove(ruta_ass)
+
+    print(f"🎬 Clip #{numero_clip} exportado con éxito a: {ruta_final}")
+    return ruta_final
