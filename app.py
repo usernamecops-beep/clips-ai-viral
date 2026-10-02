@@ -9,6 +9,7 @@ from procesador import (
     exportar_clip,
     hex_a_ass_color
 )
+from pagos_mp import crear_preference_pago
 
 # Configuración de Streamlit
 st.set_page_config(
@@ -17,6 +18,11 @@ st.set_page_config(
     layout="wide"
 )
 
+# 1. Detectar si el usuario regresa de un pago exitoso en Mercado Pago
+query_params = st.query_params
+if query_params.get("status") == "success":
+    st.session_state['es_premium'] = True
+
 # Control de estado de la sesión
 if 'es_premium' not in st.session_state:
     st.session_state['es_premium'] = False
@@ -24,8 +30,7 @@ if 'anuncio_visto' not in st.session_state:
     st.session_state['anuncio_visto'] = False
 
 st.title("🎬 Creador de Highlights Virales con IA")
-st.caption(
-    "Pega el enlace de un directo resubido para cortar, subtitular y descargar automáticamente los mejores momentos.")
+st.caption("Pega el enlace de un directo resubido para cortar, subtitular y descargar automáticamente los mejores momentos.")
 
 st.divider()
 
@@ -37,13 +42,21 @@ with st.sidebar:
     st.divider()
     st.header("💎 Plan de Usuario")
 
-    # Toggle simulado de suscripción
-    if st.toggle("Activar Membresía Premium VIP", value=st.session_state['es_premium']):
-        st.session_state['es_premium'] = True
-        st.success("⭐ Plan Premium Activo: Clips e integración total desbloqueados.")
+    if st.session_state['es_premium']:
+        st.success("⭐ Estado: Membresía Premium VIP Activa")
     else:
-        st.session_state['es_premium'] = False
         st.info("ℹ️️ Plan Gratuito: Hasta 5 clips estándar.")
+        
+        # Botón de Pago con Mercado Pago
+        if st.button("💳 Suscribirse VIP ($35.000 COP/mes)", type="primary"):
+            url_pago = crear_preference_pago(monto_cop=35000, titulo_plan="Suscripción Clips AI VIP")
+            if url_pago:
+                st.link_button("👉 Pagar con PSE / Nequi / Tarjeta", url_pago)
+            else:
+                st.error("No se pudo conectar con Mercado Pago. Verifica tu Access Token.")
+
+    # Toggle manual para pruebas en desarrollo
+    st.session_state['es_premium'] = st.toggle("Modo Prueba VIP (Simulación)", value=st.session_state['es_premium'])
 
     st.divider()
     st.header("✂️ Parámetros del Recorte")
@@ -62,8 +75,7 @@ with st.sidebar:
         cantidad_clips = st.slider("Cantidad de clips a generar:", min_value=5, max_value=15, value=10)
     else:
         max_gratuitos = 8 if st.session_state['anuncio_visto'] else 5
-        cantidad_clips = st.number_input("Cantidad de clips:", min_value=1, max_value=max_gratuitos, value=5,
-                                         disabled=True)
+        cantidad_clips = st.number_input("Cantidad de clips:", min_value=1, max_value=max_gratuitos, value=5, disabled=True)
 
         if not st.session_state['anuncio_visto']:
             st.warning("📺 ¿Quieres 3 clips extra gratis?")
@@ -77,7 +89,6 @@ with st.sidebar:
     st.divider()
     st.header("🎨 Configuración de Subtítulos")
 
-    # Switch para activar / desactivar subtítulos
     usar_subtitulos = st.checkbox("Incrustar subtítulos automáticos", value=True)
 
     if usar_subtitulos:
@@ -199,7 +210,6 @@ if 'clips_generados' in st.session_state and st.session_state['clips_generados']
 
     clips = st.session_state['clips_generados']
 
-    # Organizar los videos generados en una cuadrícula de 3 columnas
     num_columnas = min(3, len(clips))
     columnas = st.columns(num_columnas)
 
@@ -219,33 +229,3 @@ if 'clips_generados' in st.session_state and st.session_state['clips_generados']
                         mime="video/mp4",
                         key=f"dl_btn_{idx}"
                     )
-
-                    import streamlit as st
-                    from pagos_mp import crear_preference_pago
-
-                    # 1. Detectar el estado del pago al regresar de Mercado Pago
-                    query_params = st.query_params
-                    if query_params.get("status") == "success":
-                        st.session_state['es_premium'] = True
-                        st.success("🎉 ¡Pago confirmado mediante PSE/Mercado Pago! Tu suscripción Premium está activa.")
-
-                    # 2. Barra lateral en app.py
-                    with st.sidebar:
-                        st.header("💎 Suscripción Premium")
-
-                        if st.session_state.get('es_premium', False):
-                            st.success("⭐ Estado: Usuario VIP (Suscripción Activa)")
-                        else:
-                            st.info("Plan Gratuito: Hasta 5 clips por directo.")
-                            st.markdown("**Beneficios Premium:**")
-                            st.markdown(
-                                "- Hasta 15 clips por directo\n- Sin anuncios\n- Subtítulos 100% personalizados")
-
-                            # Botón para solicitar el enlace de pago
-                            if st.button("💳 Suscribirse ($35.000 COP/mes)", type="primary"):
-                                url_pago = crear_preference_pago(monto_cop=35000, titulo_plan="Suscripción Clips AI")
-
-                                if url_pago:
-                                    st.link_button("👉 Pagar con PSE / Nequi / Tarjeta", url_pago)
-                                else:
-                                    st.error("No se pudo conectar con Mercado Pago. Revisa el Access Token.")
