@@ -1,0 +1,5 @@
+streamlit
+yt-dlp
+openai
+imageio-ffmpeg
+mercadopago
