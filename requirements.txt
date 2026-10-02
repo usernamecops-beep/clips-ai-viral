@@ -1,5 +1,5 @@
 streamlit
-yt-dlp>=2024.01.01
+yt-dlp
 openai
 imageio-ffmpeg
 mercadopago
