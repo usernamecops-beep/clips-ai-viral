@@ -46,8 +46,6 @@ def descargar_directo(url_video):
         'concurrent_fragment_downloads': 1,
         'nocheckcertificate': True,
         'ignoreerrors': False,
-        
-        # 🛡️ AJUSTES ANTI-BLOQUEO 403 HTTP FORBIDDEN:
         'http_headers': {
             'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_3 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.2 Mobile/15E148 Safari/604.1',
             'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
@@ -146,7 +144,7 @@ def obtener_transcripcion_api_whisper(ruta_video, api_key=None):
 def seleccionar_highlights(segmentos_transcripcion, cantidad_clips=5, duracion_clip=15, api_key=None):
     """Filtra la transcripción usando GPT-4o-mini."""
     print(f"🤖 Seleccionando los mejores {cantidad_clips} momentos con la IA...")
-    
+
     key_a_usar = api_key if api_key else OPENAI_API_KEY
     client = openai.OpenAI(api_key=key_a_usar)
 
@@ -177,4 +175,99 @@ def seleccionar_highlights(segmentos_transcripcion, cantidad_clips=5, duracion_c
 
     if contenido.startswith("```json"):
         contenido = contenido[7:-3].strip()
-    elif contenido.startswith("
+    elif contenido.startswith("```"):
+        contenido = contenido[3:-3].strip()
+
+    return json.loads(contenido)
+
+
+def generar_subtitulos_personalizados(segmentos_clip, inicio_clip, fin_clip, ruta_ass_salida,
+                                      color_texto_ass="&H0000FFFF",
+                                      color_borde_ass="&H00000000",
+                                      tamanio_fuente=80,
+                                      alineacion=5):
+    """Genera archivo de subtítulos .ass personalizables."""
+    cabecera = f"""[Script Info]
+ScriptType: v4.00+
+PlayResX: 1080
+PlayResY: 1920
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Hormozi,Impact,{tamanio_fuente},{color_texto_ass},&H00000000,{color_borde_ass},&H80000000,1,0,0,0,100,100,0,0,1,6,0,{alineacion},50,50,50,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+"""
+    events = []
+
+    for seg in segmentos_clip:
+        if 'words' in seg:
+            for word_info in seg['words']:
+                w_start = word_info['start']
+                w_end = word_info['end']
+                texto = word_info['word'].strip().upper()
+
+                if w_start >= inicio_clip and w_end <= fin_clip:
+                    rel_start = w_start - inicio_clip
+                    rel_end = w_end - inicio_clip
+
+                    t_ini = formato_tiempo_ass(rel_start)
+                    t_fin = formato_tiempo_ass(rel_end)
+
+                    events.append(f"Dialogue: 0,{t_ini},{t_fin},Hormozi,,0,0,0,,{texto}")
+
+    with open(ruta_ass_salida, 'w', encoding='utf-8') as f:
+        f.write(cabecera + "\n".join(events))
+
+
+def exportar_clip(ruta_video_input, inicio_sec, duracion_sec, numero_clip, segmentos, id_sesion,
+                  incluir_subtitulos=True, color_texto="&H0000FFFF", color_borde="&H00000000",
+                  tamanio_fuente=80, alineacion=5):
+    """Exporta el clip vertical 9:16 con o sin subtítulos."""
+    fin_sec = inicio_sec + duracion_sec
+    carpeta_clips_sesion = os.path.join(CARPETA_CLIPS, id_sesion)
+    os.makedirs(carpeta_clips_sesion, exist_ok=True)
+
+    nombre_archivo = f"clip_{numero_clip}_viral.mp4"
+    ruta_final = os.path.join(carpeta_clips_sesion, nombre_archivo)
+
+    filtro_video = "crop=ih*(9/16):ih,scale=1080:1920"
+    ruta_ass = None
+
+    if incluir_subtitulos:
+        ruta_ass = os.path.join(carpeta_clips_sesion, f"sub_{numero_clip}_{uuid.uuid4().hex[:4]}.ass")
+        generar_subtitulos_personalizados(
+            segmentos_clip=segmentos,
+            inicio_clip=inicio_sec,
+            fin_clip=fin_sec,
+            ruta_ass_salida=ruta_ass,
+            color_texto_ass=color_texto,
+            color_borde_ass=color_borde,
+            tamanio_fuente=tamanio_fuente,
+            alineacion=alineacion
+        )
+        ruta_ass_ffmpeg = ruta_ass.replace('\\', '/').replace(':', '\\:')
+        filtro_video += f",subtitles='{ruta_ass_ffmpeg}'"
+
+    cmd = [
+        imageio_ffmpeg.get_ffmpeg_exe(), '-y',
+        '-threads', '0',
+        '-ss', str(inicio_sec),
+        '-i', ruta_video_input,
+        '-t', str(duracion_sec),
+        '-vf', filtro_video,
+        '-c:v', 'libx264',
+        '-crf', '18',
+        '-preset', 'ultrafast',
+        '-c:a', 'aac',
+        ruta_final
+    ]
+
+    subprocess.run(cmd, check=True)
+
+    if ruta_ass and os.path.exists(ruta_ass):
+        os.remove(ruta_ass)
+
+    print(f"🎬 Clip #{numero_clip} exportado con éxito a: {ruta_final}")
+    return ruta_final
